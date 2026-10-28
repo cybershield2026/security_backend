@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Security alerts</title>
+<style>
+:root{--bg:#EEF1EE;--panel:#FAFBFA;--ink:#18242E;--mute:#5E6B75;--line:#D5DBD6;--accent:#0E5A78;--on:#fff;--crit:#B3261E;--high:#C06210;--med:#8A6D00;--low:#3F7360;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#10181E;--panel:#17222A;--ink:#E4EAEE;--mute:#93A1AC;--line:#2A3944;--accent:#5BB4D6;--on:#08202B;--crit:#FF7B72;--high:#F0A04B;--med:#E0C44A;--low:#7FC4A8;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+.wrap{max-width:1080px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+h1{font-size:22px;font-weight:600;margin:0}h2{font-size:16px;font-weight:600;margin:0 0 8px}
+.mute{color:var(--mute);font-size:13px}
+button,input{font:inherit;color:var(--ink)}
+input[type=text],input[type=password]{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);margin:4px 0 12px}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.primary{background:var(--accent);color:var(--on);border:0;border-radius:6px;padding:10px 16px;cursor:pointer;font-weight:500}
+.btn{border:1px solid var(--accent);background:none;color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:13px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+.login{max-width:420px;margin:8vh auto 0}
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
+@media(min-width:640px){.stats{grid-template-columns:repeat(4,1fr)}}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.stat b{display:block;font-size:24px;font-weight:600;line-height:1.1}.stat span{color:var(--mute);font-size:13px}
+.grid{display:grid;gap:14px}@media(min-width:860px){.grid.ops{grid-template-columns:1fr 300px}}
+.tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.chip{border:1px solid var(--line);background:none;border-radius:99px;padding:4px 12px;cursor:pointer;font-size:13px}
+.chip[aria-pressed=true]{border-color:var(--accent);background:var(--accent);color:var(--on)}
+.alert{border-left:4px solid var(--c);border-top:1px solid var(--line);padding:10px 0 10px 12px}
+.alert:first-of-type{border-top:0}.alert.done{opacity:.55}
+.sev{color:var(--c);font-weight:600;font-size:13px}
+.acts{margin:4px 0 0;padding:0;list-style:none;font-size:13px}.acts li::before{content:"✓ ";color:var(--low)}
+.rule{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line)}.rule:first-of-type{border-top:0}
+.rule input{margin-top:4px;width:18px;height:18px;accent-color:var(--accent)}
+.err{color:var(--crit);margin:0 0 12px}.status{font-size:17px;margin:0 0 12px}
+</style></head><body><div class="wrap" id="app"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const COL={critical:'var(--crit)',high:'var(--high)',medium:'var(--med)',low:'var(--low)'};
+// Set this to your live server address when you deploy, e.g. https://your-app.onrender.com
+const DEFAULT_API='http://localhost:8001';
+const S={api:DEFAULT_API,mode:sessionStorage.getItem('mode'),key:sessionStorage.getItem('key'),alerts:[],rules:[],client:'',filter:'all',err:'',timer:null};
+
+async function call(path,opt={}){
+  const h={'Content-Type':'application/json',[S.mode==='ops'?'X-Admin-Key':'X-Portal-Key']:S.key};
+  const r=await fetch(S.api+path,{...opt,headers:h});
+  if(r.status===401)throw new Error('That key was not accepted.');
+  if(!r.ok)throw new Error('Server error ('+r.status+').');
+  return r.json();
+}
+async function load(){
+  try{
+    if(S.mode==='ops'){[S.alerts,S.rules]=await Promise.all([call('/ops/alerts'),call('/ops/rules')])}
+    else{const d=await call('/portal/alerts');S.alerts=d.alerts;S.client=d.client}
+    S.err='';
+  }catch(e){
+    S.err=e instanceof TypeError?'Cannot reach the server at '+S.api:e.message;
+    if(e.message.startsWith('That key')){signOut();return}
+  }
+  render();
+}
+function start(){clearInterval(S.timer);load();S.timer=setInterval(load,10000)}
+function signOut(){sessionStorage.clear();clearInterval(S.timer);S.key=null;S.mode=null;render()}
+
+function card(a,ops){
+  const word={new:'New',ack:'Acknowledged',done:'Resolved'}[a.status]||a.status;
+  const btn=a.status==='new'?'Acknowledge':a.status==='ack'?'Resolve':'';
+  const when=new Date(a.created).toLocaleString([],{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  return `<div class="alert ${a.status==='done'?'done':''}" style="--c:${COL[a.severity]||'var(--mute)'}">
+  <span class="sev">${esc(a.severity[0].toUpperCase()+a.severity.slice(1))}</span> <span class="mute">${esc(when)}${ops?' · '+esc(a.client):''} · ${esc(word)}</span>
+  <div>${esc(a.title)}</div>
+  ${a.actions.length?`<ul class="acts">${a.actions.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
+  ${ops&&btn?`<div style="margin-top:6px"><button class="btn" data-id="${a.id}" data-s="${a.status==='new'?'ack':'done'}">${btn}</button></div>`:''}</div>`;
+}
+function render(){
+  const app=$('#app');
+  if(!S.key){
+    app.innerHTML=`<form class="panel login" id="lf"><h1>Sign in</h1><p class="mute">Use the key you were given.</p>
+    ${S.err?`<p class="err">${esc(S.err)}</p>`:''}
+    <label>Server address<input type="text" id="api" value="${esc(S.api)}"></label>
+    <label><input type="radio" name="m" value="client" checked> Client</label>
+    <label style="margin-left:16px"><input type="radio" name="m" value="ops"> Our team</label>
+    <label style="display:block;margin-top:10px">Key<input type="password" id="key" autocomplete="off"></label>
+    <button class="primary" type="submit">Sign in</button></form>`;
+    return;
+  }
+  const ops=S.mode==='ops',open=S.alerts.filter(a=>a.status!=='done');
+  const shown=S.alerts.filter(a=>S.filter==='all'||a.severity===S.filter);
+  const chips=['all','critical','high','medium','low'].map(f=>`<button class="chip" data-f="${f}" aria-pressed="${S.filter===f}">${f[0].toUpperCase()+f.slice(1)}</button>`).join('');
+  const feed=`<div class="panel"><h2>${ops?'All alerts':'Your alerts'}</h2><div class="tools">${chips}</div>${shown.length?shown.map(a=>card(a,ops)).join(''):'<div class="mute">No alerts yet.</div>'}</div>`;
+  const urgent=open.filter(a=>a.severity==='critical'||a.severity==='high').length;
+  app.innerHTML=`<header><h1>${ops?'Security alerts':esc(S.client)}</h1><button class="btn" id="so">Sign out</button></header>
+  ${S.err?`<p class="err">${esc(S.err)}</p>`:''}
+  ${ops?`<div class="stats">
+    <div class="stat"><b>${open.filter(a=>a.severity==='critical').length}</b><span>Critical open</span></div>
+    <div class="stat"><b>${open.length}</b><span>Open alerts</span></div>
+    <div class="stat"><b>${S.alerts.filter(a=>a.actions.length).length}</b><span>Handled automatically</span></div>
+    <div class="stat"><b>${S.alerts.filter(a=>a.status==='done').length}</b><span>Resolved</span></div></div>
+  <div class="grid ops">${feed}<div class="panel"><h2>Automatic actions</h2><p class="mute">Applied to new alerts as they arrive.</p>
+    ${S.rules.map(r=>`<label class="rule"><input type="checkbox" data-r="${r.id}" ${r.enabled?'checked':''}><span>${esc(r.name)}<br><span class="mute">${esc(r.severities.replace(',',' and '))} alerts</span></span></label>`).join('')}</div></div>`
+  :`<div class="panel" style="margin-bottom:14px"><p class="status">${urgent?`${urgent} alert${urgent>1?'s':''} need attention. Our team is on it.`:'No urgent alerts. Everything is being monitored.'}</p></div>${feed}`}`;
+}
+document.addEventListener('submit',e=>{
+  if(e.target.id!=='lf')return;e.preventDefault();
+  S.api=$('#api').value.trim().replace(/\/$/,'');S.mode=document.querySelector('input[name=m]:checked').value;S.key=$('#key').value.trim();
+  sessionStorage.setItem('mode',S.mode);sessionStorage.setItem('key',S.key);
+  S.err='';start();
+});
+document.addEventListener('click',async e=>{
+  const t=e.target;
+  if(t.id==='so')signOut();
+  else if(t.dataset.f){S.filter=t.dataset.f;render()}
+  else if(t.dataset.id){
+    try{await call('/ops/alerts/'+t.dataset.id,{method:'PATCH',body:JSON.stringify({status:t.dataset.s})})}catch(x){S.err=x.message}
+    load();
+  }
+});
+document.addEventListener('change',async e=>{
+  if(!e.target.dataset.r)return;
+  try{await call('/ops/rules/'+e.target.dataset.r,{method:'PATCH',body:JSON.stringify({enabled:e.target.checked})})}catch(x){S.err=x.message}
+  load();
+});
+S.key?start():render();
+</script></body></html>
